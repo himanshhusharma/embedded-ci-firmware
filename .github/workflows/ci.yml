@@ -1,0 +1,82 @@
+name: Firmware CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build & unit tests (host)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Run GoogleTest suite
+        run: ctest --test-dir build --output-on-failure --output-junit test-results.xml
+
+      - name: Run simulation
+        run: ./build/speed_sim | tee simulation.log
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            build/test-results.xml
+            simulation.log
+
+  static-analysis:
+    name: Static analysis (cppcheck)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        # --error-exitcode=1 fails the job on any finding, so new defects block the merge.
+        run: |
+          cppcheck --version
+          cppcheck --enable=warning,style,performance,portability --std=c++17 \
+                   --inline-suppr --suppress=missingIncludeSystem \
+                   --error-exitcode=1 -I include \
+                   --xml --output-file=cppcheck.xml \
+                   src app include
+
+      - name: Upload cppcheck report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cppcheck-report
+          path: cppcheck.xml
+
+  cross-compile:
+    name: Cross-compile (ARM Cortex-M4)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libstdc++-arm-none-eabi-newlib
+
+      - name: Build firmware library
+        run: |
+          cmake -S . -B build-arm -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-arm -j
+
+      - name: Memory footprint
+        run: arm-none-eabi-size -t build-arm/libfw_core.a | tee size-report.txt
+
+      - name: Upload size report
+        uses: actions/upload-artifact@v4
+        with:
+          name: size-report
+          path: size-report.txt

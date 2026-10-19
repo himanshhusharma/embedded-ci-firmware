@@ -1,0 +1,5 @@
+build/
+build-*/
+cppcheck.xml
+size-report.txt
+simulation.log
